@@ -1,0 +1,231 @@
+{
+  "name": "Bonus_UptimeMonitor_Ronit_Gulia",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "b3b09390-bade-4684-a57b-fc65c0f817a4",
+      "name": "Every 5 Mins Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { check_started_at: Date.now() } }];"
+      },
+      "id": "36d93b7a-d0c6-4279-a5dc-1e171439b927",
+      "name": "Start Latency Timer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://demo.realworld.io",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 8000
+        }
+      },
+      "id": "91aa8849-7f86-45ce-b471-6f843c22e55a",
+      "name": "Ping Target App (With 3x Retry)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        32,
+        16
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const startedAt = $('Start Latency Timer').first().json.check_started_at;\nconst res = $input.first().json;\nconst statusCode = res.statusCode || (res.error ? 503 : 200);\nconst responseTimeMs = Date.now() - startedAt;\n\nconst staticData = $getWorkflowStaticData('global');\nstaticData.checks = staticData.checks || [];\nstaticData.checks.push({ ts: Date.now(), statusCode, responseTimeMs });\n// Keep last 288 checks (24h at 5-min intervals)\nif (staticData.checks.length > 288) staticData.checks.shift();\n\nconst total = staticData.checks.length;\nconst healthy = staticData.checks.filter(c => c.statusCode === 200).length;\nconst avgLatencyMs = Math.round(staticData.checks.reduce((s, c) => s + c.responseTimeMs, 0) / total);\n\nreturn [{\n  json: {\n    target_url: 'https://demo.realworld.io',\n    status_code: statusCode,\n    response_time_ms: responseTimeMs,\n    rolling_24h_uptime_pct: ((healthy / total) * 100).toFixed(2) + '%',\n    rolling_24h_avg_latency_ms: avgLatencyMs,\n    checked_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "e24e4195-313f-4fa0-884b-aea9b43a8040",
+      "name": "Compute Latency & 24h Rolling Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "status-not-200",
+              "leftValue": "={{ $json.status_code }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6056b586-2166-4fb7-a6a6-8df38b36b11a",
+      "name": "IF Status != 200",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        512,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1569253474166898810/T9mab__yULwV-oSCyjojfwxx-V1uYLyxV3kuyh3CBfUEwNvAGlQAKkJ_sCIFy3YS5bmb",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "=🚨 **DOWNTIME ALERT: {{ $json.target_url }}**\n• **HTTP Status:** `{{ $json.status_code }}`\n• **Latency:** `{{ $json.response_time_ms }} ms`\n• **24h Rolling Uptime:** `{{ $json.rolling_24h_uptime_pct }}` (Avg: {{ $json.rolling_24h_avg_latency_ms }}ms)\n• **Timestamp:** `{{ $json.checked_at }}`"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "58c3aee4-08e7-4f2a-a6a5-f50a4441a2f0",
+      "name": "Send Incident Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        768,
+        -96
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PrWsSHPcYS1nnpwj",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    message: `✅ Healthy (200 OK in ${$json.response_time_ms}ms) | 24h Uptime: ${$json.rolling_24h_uptime_pct} | 24h Avg Latency: ${$json.rolling_24h_avg_latency_ms}ms`\n  }\n}];"
+      },
+      "id": "07ba6251-2ee1-46eb-88c2-6fd50bc115ce",
+      "name": "Log Healthy Heartbeat & Daily Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        112
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 5 Mins Schedule": {
+      "main": [
+        [
+          {
+            "node": "Start Latency Timer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Latency Timer": {
+      "main": [
+        [
+          {
+            "node": "Ping Target App (With 3x Retry)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ping Target App (With 3x Retry)": {
+      "main": [
+        [
+          {
+            "node": "Compute Latency & 24h Rolling Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Latency & 24h Rolling Summary": {
+      "main": [
+        [
+          {
+            "node": "IF Status != 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Status != 200": {
+      "main": [
+        [
+          {
+            "node": "Send Incident Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Healthy Heartbeat & Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a5a0d341-4021-4e42-8c39-4d98edbe29a2",
+  "meta": {
+    "instanceId": "ca2c53c0794db068a8f820193331816ed910c4a9ca357bc4c954aa4793ebdf97"
+  },
+  "nodeGroups": [],
+  "id": "seGewwqVUyPOLiLJ",
+  "tags": []
+}
