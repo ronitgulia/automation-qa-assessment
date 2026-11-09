@@ -1,0 +1,406 @@
+{
+  "name": "Task2_Workflow_Ronit_Gulia",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "57a0432b-55aa-449a-bd33-820264f717a4",
+      "name": "Hourly Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "path": "morning-brief",
+        "options": {}
+      },
+      "id": "95de4bba-95a0-411d-a02e-92e074a15dcf",
+      "name": "Manual Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        176
+      ],
+      "webhookId": "morning-brief-webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/search/repositories",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "automation"
+            },
+            {
+              "name": "sort",
+              "value": "stars"
+            },
+            {
+              "name": "order",
+              "value": "desc"
+            },
+            {
+              "name": "per_page",
+              "value": "15"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "870d07a9-fa69-4fa1-be77-9a41054aff73",
+      "name": "1. Fetch Trending GitHub Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -176,
+        80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PrWsSHPcYS1nnpwj",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawItems = $input.first().json.items || [];\n\nconst top5 = rawItems\n  .filter(repo => !repo.archived && !repo.disabled)\n  .sort((a, b) => b.stargazers_count - a.stargazers_count)\n  .slice(0, 5)\n  .map((repo, idx) => ({\n    json: {\n      rank: idx + 1,\n      name: repo.name,\n      full_name: repo.full_name,\n      html_url: repo.html_url,\n      description: repo.description || 'No description provided',\n      stars: repo.stargazers_count,\n      forks: repo.forks_count,\n      open_issues: repo.open_issues_count,\n      language: repo.language || 'Unknown'\n    }\n  }));\n\nif (top5.length === 0) {\n  throw new Error('No active repositories returned after filtering.');\n}\n\nreturn top5;"
+      },
+      "id": "161d813b-d190-4512-b7e1-33463684b788",
+      "name": "2. Filter & Keep Top 5 Repos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $json.full_name }}/commits",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "e2f66b0f-1021-42dc-937d-ad8b5c3bdc0d",
+      "name": "3. Enrich with Latest Commit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        352,
+        -16
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PrWsSHPcYS1nnpwj",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const enriched = [];\nconst sourceRepos = $('2. Filter & Keep Top 5 Repos').all();\nconst commitResponses = $input.all();\n\nfor (let i = 0; i < commitResponses.length; i++) {\n  const repo = sourceRepos[i] ? sourceRepos[i].json : {};\n  const commitData = Array.isArray(commitResponses[i].json) ? commitResponses[i].json[0] : commitResponses[i].json;\n  const commitObj = commitData?.commit || {};\n\n  enriched.push({\n    json: {\n      ...repo,\n      latest_commit_author: commitObj?.author?.name || 'Unknown',\n      latest_commit_date: commitObj?.author?.date || 'N/A',\n      latest_commit_msg: (commitObj?.message || 'No commit message').split('\\n')[0]\n    }\n  });\n}\n\nreturn enriched;"
+      },
+      "id": "09c1a412-9057-4791-92e5-cdedd0bfc092",
+      "name": "4. Merge Repo & Commit Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "stars-threshold-check",
+              "leftValue": "={{ $json.stars }}",
+              "rightValue": 1000,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b4835406-f881-4c29-b0a4-7648c9d310c3",
+      "name": "5. IF Stars > 1000",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        832,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst lines = items.map(r => `🔥 *#${r.rank} ${r.full_name}* (⭐ ${r.stars} | 🍴 ${r.forks})\\n   • Latest Commit: \"${r.latest_commit_msg}\" by ${r.latest_commit_author}\\n   • Link: ${r.html_url}`);\n\nreturn [{\n  json: {\n    tier: 'HIGH_TRACTION (>1000 Stars)',\n    count: items.length,\n    content: `🌅 **Morning Brief — High-Traction Repos (⭐ > 1,000)**\\n\\n${lines.join('\\n\\n')}`\n  }\n}];"
+      },
+      "id": "4589b567-49e9-483b-9284-e938ce75a176",
+      "name": "Format High-Traction Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst lines = items.map(r => `🌱 *#${r.rank} ${r.full_name}* (⭐ ${r.stars})\\n   • Latest Commit: \"${r.latest_commit_msg}\"\\n   • Link: ${r.html_url}`);\n\nreturn [{\n  json: {\n    tier: 'RISING_WATCHLIST (<=1000 Stars)',\n    count: items.length,\n    content: `📋 **Morning Brief — Rising Watchlist (⭐ <= 1,000)**\\n\\n${lines.join('\\n\\n')}`\n  }\n}];"
+      },
+      "id": "cd89cf2a-a585-4226-8424-48380f8d9df0",
+      "name": "Format Standard Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1569253474166898810/T9mab__yULwV-oSCyjojfwxx-V1uYLyxV3kuyh3CBfUEwNvAGlQAKkJ_sCIFy3YS5bmb",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ $json.content }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3b3ed53d-ff0e-4786-a085-a1fcb668cfe4",
+      "name": "6. Dispatch Digest to Discord/Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        -64
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PrWsSHPcYS1nnpwj",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const errData = $input.first().json;\nreturn [{\n  json: {\n    status: 'FALLBACK_ERROR_HANDLED',\n    timestamp: new Date().toISOString(),\n    error_summary: errData.error?.message || errData.message || 'Upstream API failure captured safely',\n    action_taken: 'Routed to fallback error log without crashing workflow'\n  }\n}];"
+      },
+      "id": "4c8dd937-7ee0-433a-b791-f4bba15778cb",
+      "name": "Fallback Error Handler & Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        240
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Hourly Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "1. Fetch Trending GitHub Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "1. Fetch Trending GitHub Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Fetch Trending GitHub Repos": {
+      "main": [
+        [
+          {
+            "node": "2. Filter & Keep Top 5 Repos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback Error Handler & Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Filter & Keep Top 5 Repos": {
+      "main": [
+        [
+          {
+            "node": "3. Enrich with Latest Commit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Enrich with Latest Commit": {
+      "main": [
+        [
+          {
+            "node": "4. Merge Repo & Commit Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback Error Handler & Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Merge Repo & Commit Data": {
+      "main": [
+        [
+          {
+            "node": "5. IF Stars > 1000",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. IF Stars > 1000": {
+      "main": [
+        [
+          {
+            "node": "Format High-Traction Digest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Standard Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format High-Traction Digest": {
+      "main": [
+        [
+          {
+            "node": "6. Dispatch Digest to Discord/Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Standard Digest": {
+      "main": [
+        [
+          {
+            "node": "6. Dispatch Digest to Discord/Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Dispatch Digest to Discord/Webhook": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Fallback Error Handler & Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4ff40074-8c10-4250-b397-5075f31fa61b",
+  "meta": {
+    "instanceId": "ca2c53c0794db068a8f820193331816ed910c4a9ca357bc4c954aa4793ebdf97"
+  },
+  "nodeGroups": [],
+  "id": "uvtKIPlNH8ZUnIvM",
+  "tags": []
+}
